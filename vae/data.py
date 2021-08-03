@@ -7,10 +7,11 @@ from torch.utils.data import Dataset, DataLoader
 class TextEmbedding(nn.Module):
     def __init__(self, vectors, config):
         super().__init__()
+        self.device = config.device
         self.vecs = nn.Embedding.from_pretrained(torch.tensor(vectors))
 
     def forward(self, batch_seqs):
-        return self.vecs(batch_seqs)
+        return self.vecs(batch_seqs).to(self.device)
         # ret = []
         # for seq in batch_seqs:
         #     print(seq)

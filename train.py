@@ -13,6 +13,7 @@ from vae.data import TextEmbedding, CoLADataset
 from vae.model import LstmVariationalAutoEncoder
 
 def train():
+    args.device = torch.cuda.current_device()
     bpemb = BPEmb(lang='en', dim=200)
     data = pd.read_csv('data/CoLA/train.tsv', sep='\t', header=None)[3]
     dataset = CoLADataset(bpemb, data, args)
@@ -23,6 +24,7 @@ def train():
                                 shuffle=True)
 
     model = LstmVariationalAutoEncoder(args)
+    model = model.to(args.device)
     model.train()
     optimizer = torch.optim.AdamW(model.parameters())
     # torch.optim.Adam(params)
@@ -33,10 +35,11 @@ def train():
         for batch_ids, batch_mask, batch_lens in data_loader:
             batch_seqs = []
             for i, ids in enumerate(batch_ids):
-                batch_seqs.append(embedding(ids[:batch_lens[i]]))
+                batch_seqs.append(embedding(ids[:batch_lens[i]]).to(args.device))
             cnt += 1
             recons, z, mus, logvars = model(batch_seqs)
 
+            batch_ids = batch_ids.to(args.device)
             loss_dic = model.loss_function(batch_ids, batch_lens, recons, mus, logvars, args.kld_weight)
             loss = loss_dic['loss']
             print(loss.item(), end='\r')

@@ -58,6 +58,8 @@ class LstmVariationalAutoEncoder(nn.Module):
     def __init__(self, config):
         super().__init__()
         
+        self.device = config.device
+
         self.input_dim = config.input_dim
         self.hidden_dim = config.hidden_dim
         self.latent_dim = config.latent_dim
@@ -109,8 +111,8 @@ class LstmVariationalAutoEncoder(nn.Module):
         output, (hidden_states, cell_states) = self.encoder_lstm(x) # hidden_states: batch_size * layer * hd
         if self.bidirectional is True:
             hidden_states = torch.cat(hidden_states.split(self.layer, dim = 1), dim = 2)
-        mu = self.encoder_fc_mu(hidden_states)
-        logvar = self.encoder_fc_logvar(hidden_states)
+        mu = self.encoder_fc_mu(hidden_states).to(self.device)
+        logvar = self.encoder_fc_logvar(hidden_states).to(self.device)
 
         return mu, logvar
     
@@ -124,14 +126,16 @@ class LstmVariationalAutoEncoder(nn.Module):
         batch_size = z.shape[1]
 
         outputs = []
-        init_input = torch.zeros(batch_size, self.input_dim)
+        init_input = torch.zeros(batch_size, self.input_dim).to(self.device)
+        # print(inputs.shape)
+        raw_inputs = torch.zeros(1, length, self.input_dim).to(self.device)
         hidden_states = z
-        cell_states = torch.zeros(self.layer, batch_size, self.latent_dim)
+        cell_states = torch.zeros(self.layer, batch_size, self.latent_dim).to(self.device)
 
         if inputs is not None:
-            predict_inputs = torch.cat([init_input, inputs[:-1]]).unsqueeze(0)
-            outputs, (hidden_states, cell_states) = self.decoder_lstm(predict_inputs, (hidden_states, cell_states))
-            outputs = torch.softmax(self.decoder_linear(outputs).squeeze(0), dim = 1)
+            # predict_inputs = torch.cat([init_input, inputs[:-1]]).unsqueeze(0)
+            outputs, (hidden_states, cell_states) = self.decoder_lstm(raw_inputs, (hidden_states, cell_states))
+            outputs = self.decoder_linear(outputs).squeeze(0).to(self.device)
         else:
             pass
     

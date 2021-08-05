@@ -15,50 +15,75 @@ class AutoEncoder(nn.Module):
     def forward(self, ):
         pass
 
-class LstmAutoEncoder(nn.Module):
-    def __init__(self, config):
+class TransferLayer(nn.Module):
+    def __init__(self, input_dim, output_dim, layer_num, config):
         super().__init__()
 
-        config.input_dim
-        config.hidden_dim
-        config.latent_dim
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+        self.layer_num = layer_num
+        self.device = config.device
 
-        self.bidirectional = config.bidirectional
-        self.layer = config.layer
+        self.layers = []
+        self.add_layer(input_dim, output_dim)
+        for i in range(layer_num - 1):
+            self.add_layer(output_dim, output_dim)
 
-        #encoder struc
-        self.encoder_lstm = nn.LSTM(config.input_dim, config.hidden_dim, bidirectional=config.bidirectional, batch_first=True)
-        self.encoder_linear = nn.Linear(config.hidden_dim, config.latent_dim)
+class LinearTransferLayer(TransferLayer):
+    def __init__(self, input_dim, output_dim, layer_num, config):
+        super(LinearTransferLayer, self).__init__(input_dim, output_dim, layer_num, config)
 
-        #decoder struc
-        self.decoder_lstm = nn.LSTM(config.latent_dim, config.latent_dim, bidirectional=config.bidirectional, batch_first=True)
+    def add_layer(self, input_dim, output_dim):
+        self.layers.append(
+            nn.Sequential(
+                nn.Linear(input_dim, output_dim),
+                nn.ReLU(inplace=True)
+            ).to(self.device)
+        )
+    
+    def forward(self, x):
+        output = x
+        for layer in self.layers:
+            output = layer(output)
+        return output
 
-    def encode(self, ):
-        pass
+class HighwayTransferLayer(TransferLayer):
+    def __init__(self, input_dim, output_dim, layer_num, config):
+        super(HighwayTransferLayer, self).__init__(input_dim, output_dim, layer_num, config)
 
-    def decode(self, ):
-        pass
+    def add_layer(self, input_dim, output_dim):
+        H = nn.Sequential(
+            nn.Linear(input_dim, output_dim),
+            nn.ReLU(inplace=True)
+        ).to(self.device)
 
-    def forward(self, xs): # batch_size * seq_length * dim
-        batch_size = x.shape[0]
+        T = nn.Sequential(
+            nn.Linear(input_dim, output_dim),
+            nn.Sigmoid()
+        ).to(self.device)
+        self.layers.append((H,T))
+        
+    
+    def forward(self, x):
+        output = x
+        for H, T in self.layers:
+            h, t = H(output), T(output)
+            output = torch.mul(h, t) + torch.mul(h, (1 - t))
+        return output
 
-        return_xs = []
-        for i, x in enumerate(xs):
-            z = self.encode(x)
-            return_x = self.decode(z)
-            return_xs.append(return_x)
-        return z, return_xs
+class TranslationAutoEncoder(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+    
+    def forward(self, x):
+        return None
 
-    @classmethod
-    def loss_function(cls, xs, return_xs, z):
-        pass
-
-
-class LstmVariationalAutoEncoder(nn.Module):
+class LstmAutoEncoder(nn.Module):
     def __init__(self, config):
         super().__init__()
         
         self.device = config.device
+        self.reconstruction = config.reconstruction
 
         self.input_dim = config.input_dim
         self.hidden_dim = config.hidden_dim
@@ -71,48 +96,138 @@ class LstmVariationalAutoEncoder(nn.Module):
         #encoder struc
         self.encoder_lstm = nn.LSTM(config.input_dim, config.hidden_dim, bidirectional=config.bidirectional, num_layers=config.layer, batch_first=True)
         if config.bidirectional is True:
-            self.encoder_fc_mu = nn.Sequential(
-                nn.Linear(config.hidden_dim * 2, config.latent_dim),
-                nn.ReLU(inplace=True)
-            )
-            self.encoder_fc_logvar = nn.Sequential(
-                nn.Linear(config.hidden_dim * 2, config.latent_dim),
-                nn.ReLU(inplace=True)
-            )
-            # self.encoder_fc_mu = nn.Linear(config.hidden_dim * 2, config.latent_dim)
-            # self.encoder_fc_logvar = nn.Linear(config.hidden_dim * 2, config.latent_dim)
+            if config.transfer == 'linear':
+                self.encoder_transfer_layer = LinearTransferLayer(config.hidden_dim * 2, config.latent_dim, 4, config)
+                self.decoder_transfer_layer = LinearTransferLayer(config.latent_dim, config.hidden_dim, 4, config)
+            elif config.transfer == 'highway':
+                self.encoder_transfer_layer = HighwayTransferLayer(config.hidden_dim * 2, config.latent_dim, 4, config)
+                self.decoder_transfer_layer = HighwayTransferLayer(config.latent_dim, config.hidden_dim, 4, config)
         else:
-            self.encoder_fc_mu = nn.Sequential(
-                nn.Linear(config.hidden_dim, config.latent_dim),
-                nn.ReLU(inplace=True)
-            )
-            self.encoder_fc_logvar = nn.Sequential(
-                nn.Linear(config.hidden_dim, config.latent_dim),
-                nn.ReLU(inplace=True)
-            )
-            # self.encoder_fc_mu = nn.Linear(config.hidden_dim, config.latent_dim)
-            # self.encoder_fc_logvar = nn.Linear(config.hidden_dim, config.latent_dim)
+            if config.transfer == 'linear':
+                self.encoder_transfer_layer = LinearTransferLayer(config.hidden_dim, config.latent_dim, 4, config)
+                self.decoder_transfer_layer = LinearTransferLayer(config.latent_dim, config.hidden_dim, 4, config)
+            elif config.transfer == 'highway':
+                self.encoder_transfer_layer = HighwayTransferLayer(config.hidden_dim, config.latent_dim, 4, config)
+                self.decoder_transfer_layer = HighwayTransferLayer(config.latent_dim, config.hidden_dim, 4, config)
+
         #decoder struc
-        self.decoder_lstm = nn.LSTM(config.input_dim, config.latent_dim, bidirectional=config.bidirectional, num_layers=config.layer, batch_first=True)
-        if config.bidirectional is True:
-            # self.decoder_linear = nn.Sequential(
-            #     nn.Linear(config.latent_dim * 2, config.vocab_size),
-            #     nn.ReLU(inplace=True)
-            # )
-            self.decoder_linear = nn.Linear(config.latent_dim * 2, config.vocab_size)
-        else:
-            # self.decoder_linear = nn.Sequential(
-            #     nn.Linear(config.latent_dim, config.vocab_size),
-            #     nn.ReLU(inplace=True)
-            # )        
+        self.decoder_lstm = nn.LSTM(config.input_dim, config.hidden_dim, bidirectional=config.bidirectional, num_layers=config.layer, batch_first=True)
+   
+        if config.reconstruction == 'discrete':
             self.decoder_linear = nn.Linear(config.latent_dim, config.vocab_size)            
+        elif config.reconstruction == 'continuous':
+            self.decoder_linear = nn.Linear(config.latent_dim, config.input_dim)
 
     def encode(self, x):
         output, (hidden_states, cell_states) = self.encoder_lstm(x) # hidden_states: batch_size * layer * hd
         if self.bidirectional is True:
             hidden_states = torch.cat(hidden_states.split(self.layer, dim = 1), dim = 2)
-        mu = self.encoder_fc_mu(hidden_states).to(self.device)
-        logvar = self.encoder_fc_logvar(hidden_states).to(self.device)
+        z = self.encoder_transfer_layer(hidden_states).to(self.device)
+
+        return z
+
+    def decode(self, z, length, inputs=None):
+        batch_size = z.shape[1]
+
+        outputs = []
+        # init_input = torch.zeros(batch_size, self.input_dim).to(self.device)
+        # print(inputs.shape)
+        # raw_inputs = torch.zeros(1, length, self.input_dim).to(self.device)
+        hidden_states = self.decoder_transfer_layer(z)
+        cell_states = torch.zeros(self.layer, batch_size, self.latent_dim).to(self.device)
+
+        if inputs is not None:
+            predict_inputs = inputs[:-1].unsqueeze(0)
+            # predict_inputs = raw_inputs
+            outputs, (hidden_states, cell_states) = self.decoder_lstm(predict_inputs, (hidden_states, cell_states))
+            outputs = self.decoder_linear(outputs).squeeze(0).to(self.device)
+        else:
+            pass
+    
+        return outputs
+
+    def forward(self, inputs, **kwargs):
+        zs = []
+        for seq in inputs:
+            z = self.encode(seq.unsqueeze(0))
+            zs.append(z.unsqueeze(0))
+        zs = torch.cat(zs)
+
+        recons = []
+        for i in range(zs.shape[0]):
+            recon = self.decode(zs[i], len(inputs[i]), inputs[i])
+            recons.append(recon)
+        return recons, zs
+
+    def loss_function(self, input_ids, input_seqs, lens, recons):
+        batch_size = len(input_ids)
+        
+        if self.reconstruction == 'discrete':
+            recons_loss = 0
+            for i, (recon, input) in enumerate(zip(recons, input_ids)):
+                recons_loss += F.cross_entropy(recon, input[1:lens[i]])
+            recons_loss /= batch_size
+        elif self.reconstruction == 'continuous':
+            recons_loss = 0
+            for i, (recon, input) in enumerate(zip(recons, input_seqs)):
+                recons_loss += F.mse_loss(recon, input[1:])
+            recons_loss /= batch_size
+
+        loss = recons_loss
+        return {
+            'loss': loss,
+            'recons_loss': recons_loss,
+        }
+
+class LstmVariationalAutoEncoder(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        
+        self.device = config.device
+        self.reconstruction = config.reconstruction
+
+        self.input_dim = config.input_dim
+        self.hidden_dim = config.hidden_dim
+        self.latent_dim = config.latent_dim
+        self.vocab_size = config.vocab_size
+
+        self.bidirectional = config.bidirectional
+        self.layer = config.layer
+
+        #encoder struc
+        self.encoder_lstm = nn.LSTM(config.input_dim, config.hidden_dim, bidirectional=config.bidirectional, num_layers=config.layer, batch_first=True)
+        if config.bidirectional is True:
+            if config.transfer == 'linear':
+                self.encoder_transfer_mu = LinearTransferLayer(config.hidden_dim * 2, config.latent_dim, 4, config)
+                self.encoder_transfer_logvar = LinearTransferLayer(config.hidden_dim * 2, config.latent_dim, 4, config)
+                self.decoder_transfer_layer = LinearTransferLayer(config.latent_dim, config.hidden_dim, 4, config)
+            elif config.transfer == 'highway':
+                self.encoder_transfer_mu = HighwayTransferLayer(config.hidden_dim * 2, config.latent_dim, 4, config)
+                self.encoder_transfer_logvar = HighwayTransferLayer(config.hidden_dim * 2, config.latent_dim, 4, config)
+                self.decoder_transfer_layer = HighwayTransferLayer(config.latent_dim, config.hidden_dim, 4, config)
+        else:
+            if config.transfer == 'linear':
+                self.encoder_transfer_mu = LinearTransferLayer(config.hidden_dim, config.latent_dim, 4, config)
+                self.encoder_transfer_logvar = LinearTransferLayer(config.hidden_dim, config.latent_dim, 4, config)
+                self.decoder_transfer_layer = LinearTransferLayer(config.latent_dim, config.hidden_dim, 4, config)
+            elif config.transfer == 'highway':
+                self.encoder_transfer_mu = HighwayTransferLayer(config.hidden_dim, config.latent_dim, 4, config)
+                self.encoder_transfer_logvar = HighwayTransferLayer(config.hidden_dim, config.latent_dim, 4, config)
+                self.decoder_transfer_layer = HighwayTransferLayer(config.latent_dim, config.hidden_dim, 4, config)
+
+        #decoder struc
+        self.decoder_lstm = nn.LSTM(config.input_dim, config.latent_dim, bidirectional=config.bidirectional, num_layers=config.layer, batch_first=True)     
+        if config.reconstruction == 'discrete':
+            self.decoder_linear = nn.Linear(config.latent_dim, config.vocab_size)            
+        elif config.reconstruction == 'continuous':
+            self.decoder_linear = nn.Linear(config.latent_dim, config.input_dim)            
+
+    def encode(self, x):
+        output, (hidden_states, cell_states) = self.encoder_lstm(x) # hidden_states: batch_size * layer * hd
+        if self.bidirectional is True:
+            hidden_states = torch.cat(hidden_states.split(self.layer, dim = 1), dim = 2)
+        mu = self.encoder_transfer_mu(hidden_states).to(self.device)
+        logvar = self.encoder_transfer_logvar(hidden_states).to(self.device)
 
         return mu, logvar
     
@@ -126,15 +241,16 @@ class LstmVariationalAutoEncoder(nn.Module):
         batch_size = z.shape[1]
 
         outputs = []
-        init_input = torch.zeros(batch_size, self.input_dim).to(self.device)
+        # init_input = torch.zeros(batch_size, self.input_dim).to(self.device)
         # print(inputs.shape)
         raw_inputs = torch.zeros(1, length, self.input_dim).to(self.device)
-        hidden_states = z
+        hidden_states = self.decoder_transfer_layer(z)
         cell_states = torch.zeros(self.layer, batch_size, self.latent_dim).to(self.device)
 
         if inputs is not None:
-            # predict_inputs = torch.cat([init_input, inputs[:-1]]).unsqueeze(0)
-            outputs, (hidden_states, cell_states) = self.decoder_lstm(raw_inputs, (hidden_states, cell_states))
+            predict_inputs = inputs[:-1].unsqueeze(0)
+            # predict_inputs = raw_inputs
+            outputs, (hidden_states, cell_states) = self.decoder_lstm(predict_inputs, (hidden_states, cell_states))
             outputs = self.decoder_linear(outputs).squeeze(0).to(self.device)
         else:
             pass
@@ -158,17 +274,23 @@ class LstmVariationalAutoEncoder(nn.Module):
             recons.append(recon)
         return recons, z, mus, logvars
 
-    def loss_function(self, inputs, lens, recons, mus, logvars, kld_weight):
-        batch_size = len(inputs)
+    def loss_function(self, input_ids, input_seqs, lens, recons, mus, logvars, kld_weight):
+        batch_size = len(input_ids)
         
         logvars = logvars.view(batch_size, -1)
         mus = mus.view(batch_size, -1)
         kld_loss = torch.mean(-0.5 * torch.sum(1 + logvars - mus ** 2 - logvars.exp(), dim = 1), dim = 0)
 
-        recons_loss = 0
-        for i, (recon, input) in enumerate(zip(recons, inputs)):
-            recons_loss += F.cross_entropy(recon, input[:lens[i]])
-        recons_loss /= len(inputs)
+        if self.reconstruction == 'discrete':
+            recons_loss = 0
+            for i, (recon, input) in enumerate(zip(recons, input_ids)):
+                recons_loss += F.cross_entropy(recon, input[1:lens[i]])
+            recons_loss /= batch_size
+        elif self.reconstruction == 'continuous':
+            recons_loss = 0
+            for i, (recon, input) in enumerate(zip(recons, input_seqs[1:])):
+                recons_loss += F.mse_loss(recon, input)
+            recons_loss /= batch_size
 
         loss = recons_loss + kld_weight * kld_loss
         return {

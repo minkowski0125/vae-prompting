@@ -4,6 +4,16 @@ import torch
 from torch import nn
 from torch.utils.data import Dataset, DataLoader
 
+class BertEmbedding(nn.Module):
+    def __init__(self, model, config):
+        super().__init__()
+        self.model = model
+        self.device = config.device
+
+    def forward(self, batch_seqs):
+        # print(self.model(batch_seqs.unsqueeze(0))[0].shape)
+        return self.model(batch_seqs.unsqueeze(0))[0].squeeze(0)
+
 class TextEmbedding(nn.Module):
     def __init__(self, vectors, config):
         super().__init__()
@@ -27,7 +37,8 @@ class CoLADataset(Dataset):
         # self.seq_len = config.seq_len
         self.seq_len = 64
         for item in data:
-            ids = encoder.encode_ids(item)
+            ids = encoder.encode(item)
+            # ids = encoder.encode_ids(item)
             # print(ids)
             data_line, mask_line = torch.zeros(1, self.seq_len, dtype=torch.long), torch.zeros(1, self.seq_len, dtype=torch.long)
             data_line -= 1
